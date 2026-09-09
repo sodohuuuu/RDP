@@ -100,8 +100,8 @@ else
 fi
 
 echo
-echo "🔑 Username: MASTER"
-echo "🔒 Password: admin@123"
+echo "🔑 Username: SODO"
+echo "🔒 Password: SODOHU@123"
 echo
 echo "Untuk melihat status container:"
 echo "  docker ps"
