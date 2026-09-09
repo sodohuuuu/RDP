@@ -1,47 +1,32 @@
 #!/bin/bash
 # ============================================
-# 🚀 Windows 11 on Docker + Tailscale RDP
-# GitHub Codespaces Edition
+# 🚀 Auto Installer: Windows 11 on Docker + Cloudflare Tunnel
 # ============================================
 
 set -e
 
+echo "=== 🔧 Menjalankan sebagai root ==="
 if [ "$EUID" -ne 0 ]; then
-  echo "Root chahiye: sudo bash rdp.sh"
+  echo "Script ini butuh akses root. Jalankan dengan: sudo bash install-windows11-cloudflare.sh"
   exit 1
 fi
 
-WORKDIR="/workspaces/dockercom"
-STORAGE="/workspaces/windows-storage"
-WIN_USER="SODO"
-WIN_PASS="SODOHU@123"
-
-echo "=== 📦 Dependencies install ==="
+echo
+echo "=== 📦 Update & Install Docker Compose ==="
 apt update -y
-apt install -y docker-compose-plugin curl wget
+apt install docker-compose -y
 
-systemctl enable docker 2>/dev/null || true
-systemctl start docker   2>/dev/null || true
+systemctl enable docker
+systemctl start docker
 
-mkdir -p "$WORKDIR" "$STORAGE"
-cd "$WORKDIR"
+echo
+echo "=== 📂 Membuat direktori kerja dockercom ==="
+mkdir -p /root/dockercom
+cd /root/dockercom
 
-# ── KVM check ───────────────────────────────
-KVM_DEV=""
-TUN_DEV=""
-CAP_NET=""
-
-if [ -e /dev/kvm ]; then
-  echo "✅ KVM available"
-  KVM_DEV="      - /dev/kvm"
-  TUN_DEV="      - /dev/net/tun"
-  CAP_NET="    cap_add:\n      - NET_ADMIN"
-else
-  echo "⚠️  KVM nahi — emulation mode"
-fi
-
-echo "=== 🧾 windows.yml bana raha hoon ==="
-cat > windows.yml <<EOF
+echo
+echo "=== 🧾 Membuat file windows.yml ==="
+cat > windows.yml <<'EOF'
 version: "3.9"
 services:
   windows:
@@ -49,75 +34,86 @@ services:
     container_name: windows
     environment:
       VERSION: "11"
-      USERNAME: "${WIN_USER}"
-      PASSWORD: "${WIN_PASS}"
-      RAM_SIZE: "4G"
-      CPU_CORES: "2"
-$([ -n "$KVM_DEV" ] && printf "    devices:\n%s\n%s\n" "$KVM_DEV" "$TUN_DEV")
-$([ -n "$CAP_NET"  ] && printf "%b\n" "$CAP_NET")
+      USERNAME: "MASTER"
+      PASSWORD: "admin@123"
+      RAM_SIZE: "7G"
+      CPU_CORES: "4"
+    devices:
+      - /dev/kvm
+      - /dev/net/tun
+    cap_add:
+      - NET_ADMIN
     ports:
       - "8006:8006"
       - "3389:3389/tcp"
       - "3389:3389/udp"
     volumes:
-      - ${STORAGE}:/storage
+      - /tmp/windows-storage:/storage
     restart: always
     stop_grace_period: 2m
+
 EOF
 
-echo "=== 🚀 Windows container start ==="
-docker compose -f windows.yml up -d
+echo
+echo "=== ✅ File windows.yml berhasil dibuat ==="
+cat windows.yml
 
-# ── Tailscale install ────────────────────────
-echo "=== 🔵 Tailscale install ==="
-if ! command -v tailscale &>/dev/null; then
-  curl -fsSL https://tailscale.com/install.sh | sh
+echo
+echo "=== 🚀 Menjalankan Windows 11 container ==="
+docker-compose -f windows.yml up -d
+
+echo
+echo "=== ☁️ Instalasi Cloudflare Tunnel ==="
+if [ ! -f "/usr/local/bin/cloudflared" ]; then
+  wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -O /usr/local/bin/cloudflared
+  chmod +x /usr/local/bin/cloudflared
 fi
 
-# ── Tailscale start (userspace, Codespaces ke liye) ──
-echo "=== 🔵 Tailscale start ==="
-tailscaled --tun=userspace-networking \
-           --socks5-server=localhost:1055 \
-           --outbound-http-proxy-listen=localhost:1055 \
-           > /var/log/tailscaled.log 2>&1 &
-sleep 3
-
-# ── Auth ────────────────────────────────────
 echo
-echo "==================================================="
-echo "👉 Tailscale login ke liye neeche link khulega:"
-echo "   (browser mein open karo aur approve karo)"
-echo "==================================================="
-tailscale up --accept-routes 2>&1 | grep -o "https://.*" | head -n 1 || \
-tailscale up --accept-routes
+echo "=== 🌍 Membuat tunnel publik untuk akses web & RDP ==="
+nohup cloudflared tunnel --url http://localhost:8006 > /var/log/cloudflared_web.log 2>&1 &
+nohup cloudflared tunnel --url tcp://localhost:3389 > /var/log/cloudflared_rdp.log 2>&1 &
+sleep 6
 
-sleep 5
-
-# ── IP fetch ────────────────────────────────
-TS_IP=$(tailscale ip -4 2>/dev/null || echo "")
+CF_WEB=$(grep -o "https://[a-zA-Z0-9.-]*\.trycloudflare\.com" /var/log/cloudflared_web.log | head -n 1)
+CF_RDP=$(grep -o "tcp://[a-zA-Z0-9.-]*\.trycloudflare\.com:[0-9]*" /var/log/cloudflared_rdp.log | head -n 1)
 
 echo
 echo "=============================================="
-echo "🎉 Setup Complete!"
+echo "🎉 Instalasi Selesai!"
 echo
-echo "🌍 Web Console (NoVNC) — Codespace port 8006 forward karo"
-echo
-if [ -n "$TS_IP" ]; then
-  echo "🖥️  RDP via Tailscale:"
-  echo "    IP   : ${TS_IP}"
-  echo "    Port : 3389"
-  echo
-  echo "    👉 Windows RDP app mein type karo:"
-  echo "    ${TS_IP}:3389"
+if [ -n "$CF_WEB" ]; then
+  echo "🌍 Web Console (NoVNC / UI):"
+  echo "    ${CF_WEB}"
 else
-  echo "⚠️  Tailscale IP nahi mili — check karo: tailscale ip -4"
+  echo "⚠️ Tidak menemukan link web Cloudflare (port 8006)"
+  echo "    Cek log: tail -f /var/log/cloudflared_web.log"
 fi
+
+if [ -n "$CF_RDP" ]; then
+  echo
+  echo "🖥️  Remote Desktop (RDP) melalui Cloudflare:"
+  echo "    ${CF_RDP}"
+else
+  echo "⚠️ Tidak menemukan link RDP Cloudflare (port 3389)"
+  echo "    Cek log: tail -f /var/log/cloudflared_rdp.log"
+fi
+
 echo
-echo "🔑 Username : ${WIN_USER}"
-echo "🔒 Password : ${WIN_PASS}"
+echo "🔑 Username: MASTER"
+echo "🔒 Password: admin@123"
 echo
-echo "── Commands ──────────────────────────────────"
-echo "  docker logs -f windows     # Windows boot dekho"
-echo "  tailscale status           # Tailscale check"
-echo "  tailscale ip -4            # IP dobara dekho"
+echo "Untuk melihat status container:"
+echo "  docker ps"
+echo
+echo "Untuk menghentikan VM:"
+echo "  docker stop windows"
+echo
+echo "Untuk melihat log Windows:"
+echo "  docker logs -f windows"
+echo
+echo "Untuk melihat link Cloudflare:"
+echo "  grep 'trycloudflare' /var/log/cloudflared_*.log"
+echo
+echo "=== ✅ Windows 11 di Docker siap digunakan! ==="
 echo "=============================================="
