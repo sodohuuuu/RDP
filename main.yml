@@ -42,16 +42,33 @@ jobs:
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
           echo "RDP_CREDS=User: RDP | Password: $password" >> $env:GITHUB_ENV
 
+      - name: Install Apps
+        run: |
+          winget install Telegram.TelegramDesktop -e --silent --accept-package-agreements --accept-source-agreements
+          winget install 9NKSQGP7F2NH -e --silent --accept-package-agreements --accept-source-agreements
+
       - name: Restore Previous Session Data
         run: |
-          git clone https://x-access-token:${{ secrets.GH_DATA_TOKEN }}@github.com/${{ github.repository_owner }}/rdp-data.git C:\Users\RDP\Desktop\MyData
-          if ($LASTEXITCODE -ne 0) {
-            New-Item -Path "C:\Users\RDP\Desktop\MyData" -ItemType Directory -Force
-            cd C:\Users\RDP\Desktop\MyData
-            git init
-            git remote add origin https://x-access-token:${{ secrets.GH_DATA_TOKEN }}@github.com/${{ github.repository_owner }}/rdp-data.git
+          $token = "${{ secrets.GH_DATA_TOKEN }}"
+          git clone https://x-access-token:$token@github.com/${{ github.repository_owner }}/rdp-data.git C:\rdp-backup
+          
+          $paths = @{
+            "tg"      = @{ src = "C:\rdp-backup\tg";      dst = "C:\Users\RDP\AppData\Roaming\Telegram Desktop\tdata" }
+            "wp"      = @{ src = "C:\rdp-backup\wp";      dst = "C:\Users\RDP\AppData\Local\Packages\5319275A.WhatsAppDesktop_cv1g1gvanyjgm\LocalCache\Roaming\WhatsApp" }
+            "desktop" = @{ src = "C:\rdp-backup\desktop"; dst = "C:\Users\RDP\Desktop" }
           }
-          Write-Host "Data restored!"
+          
+          foreach ($key in $paths.Keys) {
+            $src = $paths[$key].src
+            $dst = $paths[$key].dst
+            if (Test-Path $src) {
+              New-Item -Path $dst -ItemType Directory -Force
+              robocopy $src $dst /E /NFL /NDL
+              Write-Host "Restored: $key"
+            } else {
+              Write-Host "No backup found for: $key"
+            }
+          }
 
       - name: Install Tailscale
         run: |
@@ -85,24 +102,55 @@ jobs:
           Write-Host "Address  : $env:TAILSCALE_IP"
           Write-Host "Username : RDP"
           Write-Host "Password : $env:RDP_CREDS"
-          Write-Host "Data at  : C:\Users\RDP\Desktop\MyData\"
           Write-Host "==================`n"
 
           while ($true) {
-              Write-Host "[$(Get-Date)] Syncing..."
-              cd C:\Users\RDP\Desktop\MyData
-              git config user.email "rdp@save.com"
-              git config user.name "RDP"
-              git add .
-              git commit -m "autosave $(Get-Date -Format 'HH:mm')" --allow-empty
-              git push origin main
-              Start-Sleep -Seconds 300
+            Write-Host "[$(Get-Date)] Syncing..."
+            
+            $paths = @{
+              "tg"      = @{ src = "C:\Users\RDP\AppData\Roaming\Telegram Desktop\tdata"; dst = "C:\rdp-backup\tg" }
+              "wp"      = @{ src = "C:\Users\RDP\AppData\Local\Packages\5319275A.WhatsAppDesktop_cv1g1gvanyjgm\LocalCache\Roaming\WhatsApp"; dst = "C:\rdp-backup\wp" }
+              "desktop" = @{ src = "C:\Users\RDP\Desktop"; dst = "C:\rdp-backup\desktop" }
+            }
+            
+            foreach ($key in $paths.Keys) {
+              $src = $paths[$key].src
+              $dst = $paths[$key].dst
+              if (Test-Path $src) {
+                New-Item -Path $dst -ItemType Directory -Force
+                robocopy $src $dst /E /NFL /NDL
+              }
+            }
+            
+            cd C:\rdp-backup
+            git config user.email "rdp@save.com"
+            git config user.name "RDP"
+            git add .
+            git commit -m "autosave $(Get-Date -Format 'HH:mm')" --allow-empty
+            git push origin main
+            
+            Start-Sleep -Seconds 300
           }
 
       - name: Final Save on Exit
         if: always()
         run: |
-          cd C:\Users\RDP\Desktop\MyData
+          $paths = @{
+            "tg"      = @{ src = "C:\Users\RDP\AppData\Roaming\Telegram Desktop\tdata"; dst = "C:\rdp-backup\tg" }
+            "wp"      = @{ src = "C:\Users\RDP\AppData\Local\Packages\5319275A.WhatsAppDesktop_cv1g1gvanyjgm\LocalCache\Roaming\WhatsApp"; dst = "C:\rdp-backup\wp" }
+            "desktop" = @{ src = "C:\Users\RDP\Desktop"; dst = "C:\rdp-backup\desktop" }
+          }
+          
+          foreach ($key in $paths.Keys) {
+            $src = $paths[$key].src
+            $dst = $paths[$key].dst
+            if (Test-Path $src) {
+              New-Item -Path $dst -ItemType Directory -Force
+              robocopy $src $dst /E /NFL /NDL
+            }
+          }
+          
+          cd C:\rdp-backup
           git config user.email "rdp@save.com"
           git config user.name "RDP"
           git add .
